@@ -1,0 +1,105 @@
+set ignoreTypes = false .
+
+type id.
+type key.
+type macAddress.
+type nonce.
+type addid.
+type mic.
+type msg.
+
+
+const pass: bitstring.
+
+(* HashMac *)
+fun HMAC_MAC_UEK(key, addid, nonce, nonce): key.
+fun HAMC_MAC_UCK(key, addid, nonce, nonce): key.
+fun HAMC_MAC_MAK(key, addid, nonce, nonce): key.
+fun HMAC_MAC_KEK(key, addid, nonce, nonce): key.
+fun HMAC_MAC_N1Seed(key, addid, nonce, nonce): bitstring.
+fun HMAC_MAC_msg(key, bitstring): mic.
+fun SHA256_nonce(bitstring): nonce.
+
+(* ADDID Item *)
+fun ADDID(macAddress, macAddress): addid[data].
+
+(* Channel Between Entity *)
+free cNoSec: channel.
+
+(* Wrap the message transported on the channel *)
+fun Unicast1(nonce): msg[data].
+fun Unicast2(nonce, nonce, mic): msg[data].
+fun Unicast3(nonce, mic): msg[data].
+
+(*Type Converter*)
+fun nonce_to_bitstring(nonce): bitstring [data ,typeConverter ] .
+
+query UEK: key, UCK: key, MAK: key, KEK: key, N1: nonce;
+inj-event(UEUnicastFinish(UEK, UCK, MAK, KEK, N1)) ==> inj-event(APUnicastFinish(UEK, UCK, MAK, KEK, N1)).
+
+(*Event*)
+event APUnicastFinish(key, key, key, key, nonce).
+event UEUnicastFinish(key, key, key, key, nonce).
+
+query secret UEK.
+query secret UCK.
+query secret MAK.
+query secret KEK.
+query secret newN1.
+
+(* Local Storage*)
+table APLocalStorage(key, key, key, key, nonce).
+table UELocalStorage(key, key, key, key, nonce).
+
+(* Unicast Key Negotiation *)
+let APUnicast(idAP: id, BK: key, macUE: macAddress, macAP: macAddress) = (
+      new N1: nonce;
+      out(cNoSec, Unicast1(N1));
+      in(cNoSec, Unicast2(xN1, N2, xmicUE));
+      if xN1 = N1 then
+      (
+            let UEK = HAMC_MAC_MAK(BK, ADDID(macUE, macAP), N1, N2) in
+            let UCK = HAMC_MAC_UCK(BK, ADDID(macUE, macAP), N1, N2) in
+            let MAK = HAMC_MAC_MAK(BK, ADDID(macUE, macAP), N1, N2) in
+            let KEK = HMAC_MAC_KEK(BK, ADDID(macUE, macAP), N1, N2) in
+            let N1Seed = HMAC_MAC_N1Seed(BK, ADDID(macUE, macAP), N1, N2) in
+            let newN1 = SHA256_nonce(N1Seed) in
+            let micUE = HMAC_MAC_msg(MAK, (ADDID(macUE, macAP), xN1, N2)) in
+            if micUE = xmicUE then
+            (
+                  let MICAP = HMAC_MAC_msg(MAK, nonce_to_bitstring(N2)) in
+                  out(cNoSec, Unicast3(N2, MICAP));
+                  insert APLocalStorage(UEK, UCK, MAK, KEK, newN1);
+                  event APUnicastFinish(UEK, UCK, MAK, KEK, newN1)
+            )
+      )
+).
+
+let UEUnicast(idUE: id, BK: key, macUE: macAddress, macAP: macAddress) = (
+      new N2: nonce;
+      in(cNoSec, Unicast1(N1));
+      let UEK = HAMC_MAC_MAK(BK, ADDID(macUE, macAP), N1, N2) in
+      let UCK = HAMC_MAC_UCK(BK, ADDID(macUE, macAP), N1, N2) in
+      let MAK = HAMC_MAC_MAK(BK, ADDID(macUE, macAP), N1, N2) in
+      let KEK = HMAC_MAC_KEK(BK, ADDID(macUE, macAP), N1, N2) in
+      let N1Seed = HMAC_MAC_N1Seed(BK, ADDID(macUE, macAP), N1, N2) in
+      let N1 = SHA256_nonce(N1Seed) in
+      let MICUE = HMAC_MAC_msg(MAK, (N1, N2)) in
+      in(cNoSec, Unicast3(xN2, MICAP));
+      let MICAP' = HMAC_MAC_msg(MAK, nonce_to_bitstring(xN2)) in
+      if xN2 = N2 && MICAP' = MICAP then
+      (
+            insert UELocalStorage(UEK, UCK, MAK, KEK, N1);
+            event UEUnicastFinish(UEK, UCK, MAK, KEK, N1)
+      )
+).
+
+process 
+    new idUE: id; new macUE: macAddress; 
+    new idAP: id; new macAP: macAddress;
+    new BK: key;
+    (!UEUnicast(idUE, BK, macUE, macAP) | !APUnicast(idAP, BK, macUE, macAP))
+     
+
+
+

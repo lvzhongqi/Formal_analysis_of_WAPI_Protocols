@@ -1,0 +1,98 @@
+set ignoreTypes = false .
+
+type key.
+type pkey.
+type skey.
+type spkey.
+type sskey.
+type nonce.
+type msg.
+type id.
+type macAddress.
+type certSignature.
+type addid.
+
+const pass: bitstring.
+const groupKey: bitstring.
+
+(* Message Signature *)
+fun pk(skey): pkey.
+fun sign(bitstring, skey): bitstring[data].
+reduc forall m: bitstring, k: skey; checksign(m, pk(k), sign(m, k)) = pass.
+
+fun bitstring_to_nonce(bitstring): nonce[data, typeConverter] .
+
+(* HashMac*)
+fun HASH_MAC256(bitstring, key): bitstring.
+fun HASH_MAC_K(nonce, bitstring): key.
+fun HASH_MAC_ICK(nonce, bitstring): key.
+
+(*Hash Function*)
+fun hash(nonce): nonce.
+
+(* block encryption*)
+fun enc(bitstring, key, nat): bitstring.
+fun dec(bitstring, key, nat): bitstring.
+equation forall m: bitstring, k: key, n: nat; dec(enc(m, k, n), k, n) = m.
+
+(* ADDID Item *)
+fun ADDID(macAddress, macAddress): addid[data].
+
+(* Channel Between Entity *)
+free cNoSec: channel.
+
+(* Wrap the message transported on the channel *)
+fun Group1(bitstring): bitstring[data].
+fun Group2(bitstring): bitstring[data].
+
+table APLocalStorage(key, key).
+table UELocalStorage(key, key).
+
+(* event *)
+event  APFinishGroupKeyAgreement(key, key).
+event  UEFinishGroupKeyAgreement(key, key).
+
+query K: key, ICK: key;
+inj-event(APFinishGroupKeyAgreement(K, ICK)) ==> inj-event(UEFinishGroupKeyAgreement(K, ICK)).
+
+query secret AP_K.
+query secret AP_ICK.
+query secret UE_K.
+query secret UE_ICK.
+
+let APGroupKeyAgreement(idAP: id, macUE: macAddress, macAP: macAddress, MAK: key, KEK: key, keyCounter: nat) = (
+    let newKeyCounter = keyCounter + 1 in
+    new NMK: nonce;
+    let enc_NMK = enc((NMK, groupKey), KEK, newKeyCounter) in
+    let micAP = HASH_MAC256((ADDID(macAP, macUE), newKeyCounter, enc_NMK), MAK) in
+    out(cNoSec, Group1((ADDID(macAP, macUE), newKeyCounter, enc_NMK, micAP)));
+    in (cNoSec, Group2((ADDID(xmacAP: macAddress, xmacUE: macAddress), xkeyCounter: nat, xmicUE: bitstring)));
+    let micUE = HASH_MAC256((ADDID(xmacAP, xmacUE), xkeyCounter), MAK) in
+    if micUE = xmicUE && ADDID(xmacAP, xmacUE) = ADDID(macAP, macUE) && xkeyCounter = newKeyCounter then (
+        let AP_K = HASH_MAC_K(NMK, groupKey) in
+        let AP_ICK = HASH_MAC_ICK(NMK, groupKey) in
+        insert APLocalStorage(AP_K, AP_ICK);
+        event APFinishGroupKeyAgreement(AP_K, AP_ICK)
+    )
+).
+
+let UEGroupKeyAgreement(idUE: id, macUE: macAddress, macAP: macAddress, MAK: key, KEK:key, keyCounter: nat) = (
+    in(cNoSec, Group1((ADDID(xmacAP: macAddress, xmacUE: macAddress), xkeyCounter: nat, enc_NMK:bitstring, xmicAP: bitstring))); 
+    let micAP = HASH_MAC256((ADDID(xmacAP, xmacUE), xkeyCounter, enc_NMK), MAK) in
+    if micAP = xmicAP && keyCounter <= xkeyCounter then (
+        let keyCounter = xkeyCounter in
+        let NMK = bitstring_to_nonce(dec(enc_NMK, KEK, keyCounter)) in
+        let UE_K = HASH_MAC_K(NMK, groupKey) in
+        let UE_ICK = HASH_MAC_ICK(NMK, groupKey) in
+        let micUE = HASH_MAC256((ADDID(macAP, macUE), keyCounter), MAK) in
+        out(cNoSec, Group2((ADDID(macAP, macUE), keyCounter, micUE)));
+        event UEFinishGroupKeyAgreement(UE_K, UE_ICK);
+        insert UELocalStorage(UE_K, UE_ICK)
+    )
+).
+
+process 
+    new idUE: id; new macUE: macAddress; 
+    new idAP: id; new macAP: macAddress;
+    new MAK: key; new KEK: key;
+    (!APGroupKeyAgreement(idUE, macUE, macAP, MAK, KEK, 0) | !UEGroupKeyAgreement(idAP, macUE, macAP, MAK, KEK, 0))

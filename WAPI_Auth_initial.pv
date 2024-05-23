@@ -1,0 +1,192 @@
+(* 不忽略格式检查，传进来的参数必须格式正确 *)
+set ignoreTypes = false .
+
+(* 定义 密钥、公钥、私钥、签名用公钥、签名用私钥、数据、消息、id、MAC地址、证书签名、addid、证书 数据类型*)
+type key.
+type pkey.
+type skey.
+type spkey.
+type sskey.
+type nonce.
+type msg.
+type id.
+type macAddress.
+type certSignature.
+type addid.
+type certificate.
+
+const pass: bitstring. (* 定义 密码 数据类型 *)
+
+(* Message Signature *)
+fun pk(skey): pkey. (*定义公私钥，有私钥的一定有公钥*)
+fun sign(bitstring, skey): bitstring. (*定义私钥签名*)
+reduc forall m: bitstring, k: skey; checksign(m, pk(k), sign(m, k)) = pass. (*定义公钥验证签名*)
+
+
+(* Diffie-Hellman Key Agreement *) 
+ (* 没有析构由e^xy e^x 推到y的值，表明无法实现，椭圆曲线的上的离散对数问题 *)
+type G. (* 底数 *)
+type exponent. (* 指数 *)
+const g1: G[data]. (* 所有人公用底数 *)
+fun exp(G, exponent): G. (* 指数运算 *)
+equation forall x: exponent, y: exponent; exp(exp(g1, x), y) = exp(exp(g1, y), x). (* e^xy=e^yx *)
+
+(* HashMac *)
+fun HMAC_MAC_key(G, nonce, nonce): key. (* 生成密钥的mac *)
+fun HMAC_MAC_nonce(G, nonce, nonce): nonce. (* 生成数据的mac *)
+
+(*Hash Function*)
+fun hash(nonce): nonce.(* 定义hash计算 *)
+
+(* Certificate *)
+fun spk(sskey): spkey.(* 定义签名验证算法 *)
+fun signCert(id, pkey, sskey): certSignature.
+fun cert(id, pkey, certSignature): certificate[data].
+reduc forall holderid:id, holderpk: pkey, certsign: certSignature, issuerssk: sskey; 
+verifyCertificate(cert(holderid, holderpk, signCert(holderid, holderpk, issuerssk)), spk(issuerssk)) = pass.
+
+(* ADDID Item *)
+fun ADDID(macAddress, macAddress): addid[data].  (* 定义ADDID函数 *)
+
+(*Event*)
+event APFinishAuthBK(id, key). 
+event APFinishAuthAID(id, nonce).
+event UEFinishAuthBK(id, key).
+event UEFinishAuthAID(id, nonce).
+event UE_AID_finish(id, nonce).
+event AP_AID_finish(id, nonce).
+event APSendAID(id, nonce).
+event UESendAID(id).
+
+(* Channel Between Entity *)
+free cNoSec: channel.
+
+(* Wrap the message transported on the channel *)
+fun Auth1(bitstring): msg[data].
+fun Auth2(bitstring): msg[data].
+fun Auth3(bitstring): msg[data].
+fun Auth4(bitstring): msg[data].
+fun Auth5(bitstring): msg[data].
+fun Auth6(bitstring): msg[data].
+fun Auth7(bitstring): msg[data].
+
+(* AP Localhost Storage*)
+
+query idUE:id, idAP:id,AID:nonce;
+inj-event(APSendAID(idUE, AID)) ==>inj-event(UESendAID(idAP)). (* AID的单设一致性 *)
+
+query idUE: id, idAP: id, BK: key;
+inj-event(UEFinishAuthBK(idUE, BK)) ==> inj-event(APFinishAuthBK(idAP, BK)).(* BK的单设一致性 *)
+
+query idUE: id, idAP: id, AID: nonce;
+inj-event(UEFinishAuthAID(idUE, AID)) ==> inj-event(APFinishAuthAID(idAP, AID)).(* BK的单设一致性 *)
+
+query idUE:id, idAP: id, aid: nonce;
+inj-event(UE_AID_finish(idUE, aid)) ==> inj-event(AP_AID_finish(idAP, aid)).(* aid 的单设一致性 *)
+
+(* 密钥的机密性 *)
+query secret AP_BK.
+query secret UE_BK.
+query secret AP_newAid.
+query secret UE_newAid. 
+
+(* Certificate based authentication *)
+let UEAuthentication(idUE: id, skUE: skey, certUE: certificate, certAS: certificate, macUE: macAddress, macAP: macAddress) = (
+      let cert(idAS, pkAS, AScertSignature) = certAS in 
+      in(cNoSec, msg2: msg);
+      let Auth1((aid: nonce, certAP: certificate, g: G)) = msg2 in
+      event UE_AID_finish(idUE, aid);
+      new nue: nonce;
+      new x: exponent;
+      let tpkUE = exp(g, x) in
+      let cert(idAP, pkAP, APCertSignature) = certAP in
+      let signUE = sign((aid, idAP, nue, tpkUE, certUE), skUE) in
+      out(cNoSec, Auth2((aid, idAP, nue, tpkUE, certUE, g, signUE)));
+      in(cNoSec, msg5: msg);
+      let Auth5((xidAP: id, xidUE: id, nap: nonce, xnue: nonce, tpkAP: G, xtpkUE: G, res: nat, (ADDID(macAP': macAddress, macUE': macAddress), nue': nonce, nap': nonce, resUE: nat, resAP: nat, certUE': certificate, certAP': certificate, signAS: bitstring), signAP: bitstring)) = msg5 in
+      if xidUE = idUE && xidAP = idAP && xnue = nue && xtpkUE = tpkUE then 
+      (
+            if checksign((xidAP, xidUE, nap, xnue, tpkAP, xtpkUE, res, (ADDID(macAP', macUE'), nue', nap', resUE, resAP, certUE', certAP', signAS)), pkAP, signAP) = pass then (
+                  if res = 0 then (
+                        if checksign(((ADDID(macAP', macUE'), nue', nap', resUE, resAP, certUE', certAP')), pkAS, signAS) = pass then (
+                              if resAP = 0 then (
+                                    let UE_BK = HMAC_MAC_key(exp(tpkAP, x), nue, nap) in
+                                    let UE_AIDSeed = HMAC_MAC_nonce(exp(tpkAP, x), nue, nap) in
+                                    let UE_newAid = hash(UE_AIDSeed) in  
+                                    event UEFinishAuthBK(idUE, UE_BK);
+                                    event UEFinishAuthAID(idUE, UE_newAid)
+                              )
+                        )
+                  )
+            )
+      )
+).
+
+let APAuthentication(idAP: id, skAP: skey, certAP: certificate, certAS: certificate, macAP: macAddress, macUE: macAddress) = (
+      new aid: nonce;
+      new g: G;
+      let msg1 = Auth1((aid, certAP, g)) in
+      out(cNoSec, msg1);
+      event AP_AID_finish(idAP, aid);
+      in(cNoSec, msg2: msg);
+      let Auth2((xaid: nonce, xidAP: id, nue: nonce, tpkUE: G, certUE: certificate, xg: G, signUE: bitstring)) = msg2 in
+      let cert(idUE, pkUE, UECertSignature) = certUE in
+      if xaid = aid && xidAP = idAP && xg = g then
+      (
+            if checksign((xaid, xidAP, nue, tpkUE, certUE, xg), pkUE, signUE) = pass then 
+            (
+                  new nap: nonce;
+                  let msg3 = Auth3((ADDID(macAP, macUE), nap, nue, certAP, certUE)) in
+                  out(cNoSec, msg3);
+                  in(cNoSec, msg4: msg);
+                  let Auth4((ADDID(macAP': macAddress, macUE': macAddress), nap': nonce, nue': nonce, resAP: nat, resUE: nat, certAP': certificate, certUE': certificate, signAS: bitstring)) = msg4 in
+                  let cert(idAS, pkAS, ASCertSignature) = certAS in
+                  if checksign((ADDID(macAP', macUE'), nap', nue', resAP, resUE, certAP', certUE'), pkAS, signAS) = pass then
+                  if resUE  = 0 then 
+                  (
+                        new y: exponent;
+                        let res = 0 in
+                        let tpkAP = exp(g, y) in
+                        let AP_BK = HMAC_MAC_key(exp(tpkUE, y), nue, nap) in
+                        let AP_AIDSeed = HMAC_MAC_nonce(exp(tpkUE, y), nue, nap) in
+                        let AP_newAid = hash(AP_AIDSeed) in
+                        event APFinishAuthBK(idAP, AP_BK);
+                        event APFinishAuthAID(idAP, AP_newAid);
+                        let signAP = sign((idAP, idUE, nap, nue, tpkAP, tpkUE, res, (ADDID(macAP', macUE'), nap', nue', resUE, resAP, certAP', certUE', signAS)), skAP) in
+                        let msg5 = Auth5((idAP, idUE, nap, nue, tpkAP, tpkUE, res, (ADDID(macAP', macUE'), nap', nue', resAP, resUE, certAP', certUE', signAS), signAP)) in
+                        out(cNoSec, msg5)
+                  )
+            )
+      )
+).
+    
+let ASAuthentication(idAS: id, skAS: skey, sskAS: sskey, certAS: certificate) = (
+      in(cNoSec, msg3: msg);
+      let Auth3((ADDID(macAP:macAddress, macUE:macAddress), nap: nonce, nue: nonce, certAP: certificate, certUE: certificate)) = msg3 in
+      if verifyCertificate(certAP, spk(sskAS)) = pass then
+      let resAP = 0 in  
+      if verifyCertificate(certUE, spk(sskAS)) = pass then
+      let resUE = 0 in  
+      if resAP = 0 && resUE = 0 then 
+      (
+        let signAS = sign((ADDID(macAP, macUE), nap, nue, resAP, resUE, certAP, certUE), skAS) in
+        let msg4 = Auth4((ADDID(macAP, macUE), nap, nue, resAP, resUE, certAP, certUE, signAS)) in
+        out(cNoSec, msg4)
+      )
+).
+
+process 
+    new idUE: id; new idAP: id; new idAS: id; new skUE: skey; new skAP: skey; new skAS: skey; new sskAS: sskey;
+    new macUE: macAddress; new macAP: macAddress;
+    let pkUE = pk(skUE) in out(cNoSec, pkUE);
+    let pkAP = pk(skAP) in out(cNoSec, pkAP);
+    let pkAS = pk(skAS) in out(cNoSec, pkAS); 
+    let certUE = cert(idUE, pkUE, signCert(idUE, pkUE, sskAS)) in
+    let certAP = cert(idAP, pkAP, signCert(idAP, pkAP, sskAS)) in
+    let certAS = cert(idAS, pkAS, signCert(idAS, pkAS, sskAS)) in
+    (!UEAuthentication(idUE, skUE, certUE, certAS, macUE, macAP) | !APAuthentication(idAP, skAP, certAP, certAS, macAP, macUE) |
+    !ASAuthentication(idAS, skAS, sskAS, certAS))
+     
+
+
+

@@ -1,0 +1,133 @@
+set ignoreTypes = false .
+
+type key.
+type pkey.
+type skey.
+type spkey.
+type sskey.
+type nonce.
+type msg.
+type id.
+type macAddress.
+type certSignature.
+type addid.
+type certificate.
+
+const pass: bitstring.
+
+(* Message Signature *)
+fun pk(skey): pkey.
+fun sign(bitstring, skey): bitstring[data].
+reduc forall m: bitstring, k: skey; checksign(m, pk(k), sign(m, k)) = pass.
+
+
+(* Diffie-Hellman Key Agreement *)
+type G.
+type exponent.
+const g1: G[data].
+fun exp(G, exponent): G.
+equation forall x: exponent, y: exponent; exp(exp(g1, x), y) = exp(exp(g1, y), x).
+
+(* HashMac *)
+fun HMAC_MAC_key(G, nonce, nonce): key.
+fun HMAC_MAC_nonce(G, nonce, nonce): nonce.
+
+(*Hash Function*)
+fun hash(nonce): nonce.
+
+(* Certificate *)
+fun spk(sskey): spkey.
+fun signCert(id, pkey, sskey): certSignature.
+fun cert(id, pkey, certSignature): certificate[data].
+reduc forall holderid:id, holderpk: pkey, certsign: certSignature, issuerssk: sskey; 
+verifyCertificate(cert(holderid, holderpk, signCert(holderid, holderpk, issuerssk)), spk(issuerssk)) = pass.
+
+(* ADDID Item *)
+fun ADDID(macAddress, macAddress): addid[data].
+
+(*Event*)
+event UEFinishAuth(key, nonce).
+event APFinishAuth(key, nonce).
+event UE_AID_finish(id, nonce).
+event AP_AID_finish(id, nonce).
+
+(* Channel Between Entity *)
+free cSec: channel [private].
+free cNoSec: channel.
+
+(* Wrap the message transported on the channel *)
+fun Auth1(bitstring): msg[data].
+fun Auth2(bitstring): msg[data].
+fun Auth3(bitstring): msg[data].
+
+(* AP Localhost Storage*)
+
+query BK: key, aid: nonce;
+inj-event(APFinishAuth(BK, aid)) ==> inj-event(UEFinishAuth(BK, aid)).
+
+query secret AP_BK.
+query secret UE_BK.
+query secret AP_newAid.
+query secret UE_newAid.
+
+(* Certificate based authentication *)
+let UEAuthentication(idUE: id, skUE: skey, aid: nonce, certAP: certificate, certUE: certificate) = (
+    in(cNoSec, Auth1((xaid: nonce, certAP: certificate, g: G)));
+    if xaid = aid then (
+          new nue: nonce;
+          new x: exponent;
+          let tpkUE = exp(g, x) in
+          let cert(idAP, pkAP, APCertSignature) = certAP in
+          let signUE = sign((aid, idAP, nue, tpkUE, certUE, g), skUE) in
+          out(cNoSec, Auth2((aid, idAP, nue, tpkUE, certUE, g, signUE)));
+          in(cNoSec,  Auth3((xidAP: id, xidUE: id, xnue: nonce, nap: nonce, verRS: nat, xtpkUE: G, tpkAP: G, signAP: bitstring)));
+          if idAP  = xidAP && idUE = xidUE && nue = xnue && xtpkUE = tpkUE then
+          (
+                if checksign((xidAP, xidUE, xnue, nap, verRS, xtpkUE, tpkAP, signAP), pkAP, signAP) = pass then
+                (
+                       let UE_BK = HMAC_MAC_key(exp(tpkAP, x), nue, nap) in
+                       let UE_AIDSeed = HMAC_MAC_nonce(exp(tpkAP, x), nue, nap) in
+                       let UE_newAid = hash(UE_AIDSeed) in  
+                       event UEFinishAuth(UE_BK, UE_newAid)
+                )
+          )
+    ) 
+).
+
+let APAuthentication(idAP: id, skAP: skey, aid: nonce, certAP: certificate, certUE: certificate) = (
+      new g: G;
+      out(cNoSec, Auth1((aid, certAP, g)));
+      in(cNoSec, Auth2((xidAP: id, xaid: nonce, nue: nonce, tpkUE: G, xcertUE: certificate, xg: G, signUE: bitstring)));
+      if xaid = aid && xidAP = idAP && xg = g then (
+            let cert(idUE, pkUE, UECertSignature) = certUE in
+            if checksign((xidAP, xaid, nue, tpkUE, certUE, xg), pkUE, signUE) = pass then
+            (
+                  if xcertUE = certUE then 
+                  (
+                        let verRs = 0 in
+                        new nap: nonce;
+                        new y: exponent;
+                        let tpkAP = exp(g, y) in
+                        let AP_BK = HMAC_MAC_key(exp(tpkUE, y), nue, nap) in
+                        let AP_AIDSeed = HMAC_MAC_nonce(exp(tpkUE, y), nue, nap) in
+                        let AP_newAid = hash(AP_AIDSeed) in
+                        event APFinishAuth(AP_BK, AP_newAid);
+                        let signAP = sign((idAP, idUE, nue, nap, verRs, tpkUE, tpkAP), skAP) in
+                        out(cNoSec, Auth3((idAP, idUE, nue, nap, verRs, tpkUE, tpkAP, signAP)))
+                  )
+            )
+      ) 
+).
+
+process 
+    new idUE: id; new idAP: id; new skUE: skey; new skAP: skey; new aid: nonce;
+    new macUE: macAddress; new macAP: macAddress;
+    let pkUE = pk(skUE) in out(cNoSec, pkUE);
+    let pkAP = pk(skAP) in out(cNoSec, pkAP);
+    new certAP: certificate;
+    new certUE: certificate;
+    (!UEAuthentication(idUE, skUE, aid, certAP, certUE) | !APAuthentication(idAP, skAP, aid, certAP, certUE))
+     
+
+
+

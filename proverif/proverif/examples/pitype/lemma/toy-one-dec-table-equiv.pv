@@ -1,0 +1,51 @@
+(*************************************************************
+ *                                                           *
+ *  Cryptographic protocol verifier                          *
+ *                                                           *
+ *  Bruno Blanchet, Vincent Cheval, and Marc Sylvestre       *
+ *                                                           *
+ *  Copyright (C) INRIA, CNRS 2000-2021                      *
+ *                                                           *
+ *************************************************************)
+
+(*
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details (in file LICENSE).
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+*)
+free c:channel.
+free s:bitstring [private].
+
+table tbl(bitstring).
+
+fun enc(bitstring,bitstring):bitstring.
+reduc forall x:bitstring,y:bitstring; dec(enc(x,y),y) = x.
+
+set preciseActions = true.
+(* ProVerif would not be able to prove equivalence without preciseActions.*)
+
+process
+  new k1:bitstring;
+  new k2:bitstring;
+  insert tbl(k1);
+  insert tbl(k2);
+  get tbl(x:bitstring) in
+  out(c,x);
+  out(c,choice[enc(s,(k1,k2)),s])
+
+(* EXPECTPV
+RESULT Observational equivalence is true.
+0.028s (user 0.012s + system 0.016s), max rss 8772K
+END *)

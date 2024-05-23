@@ -1,0 +1,178 @@
+type id.
+type key.
+type macAddress.
+type nonce.
+type addid.
+type mic.
+type msg.
+type bksa.
+type usksa.
+type KeyID.
+
+const pass: bitstring.
+const UEEND: bitstring.
+
+(* HashMac *)
+fun HMAC_MAC_UEK(key, addid, nonce, nonce): key.
+fun HMAC_MAC_UCK(key, addid, nonce, nonce): key.
+fun HMAC_MAC_MAK(key, addid, nonce, nonce): key.
+fun HMAC_MAC_KEK(key, addid, nonce, nonce): key.
+fun HMAC_MAC_N1Seed(key, addid, nonce, nonce): bitstring.
+fun HMAC_MAC_msg(key, bitstring): mic.
+fun SHA256_nonce(bitstring): nonce.
+
+(* ADDID Item *)
+fun ADDID(macAddress, macAddress): addid[data].
+
+(* Channel Between Entity *)
+free cNoSec: channel.
+
+(* Wrap the message transported on the channel *)
+fun Unicast1(KeyID, nat, addid, nonce): msg[data].
+fun Unicast2(KeyID, nat, addid, nonce, nonce, mic): msg[data].
+fun Unicast3(KeyID, nat, addid, nonce, mic): msg[data].
+
+(* MAC *)
+fun hmac_sha_mic(key, bitstring): mic.
+
+(*Type Converter*)
+fun nonce_to_bitstring(nonce): bitstring [data ,typeConverter ] .
+
+(*Hash Function*)
+fun hash_nonce(bitstring): nonce.
+
+query UEK: key, UCK: key, MAK: key, KEK: key, N1: nonce;
+inj-event(UEReUnicastFinish(UEK, UCK, MAK, KEK, N1)) ==> inj-event(APReUnicastFinish(UEK, UCK, MAK, KEK, N1)).
+
+query u1: nat, u2: nat;
+inj-event(UEUSKid(u2)) ==> inj-event(APUSKid(u1)).
+
+query secret UEK.
+query secret UCK.
+query secret MAK.
+query secret KEK.
+query secret newN1.
+
+(*Event*)
+event APReUnicastFinish(key, key, key, key, nonce).
+event UEReUnicastFinish(key, key, key, key, nonce).
+event APUSKid(nat).
+event UEUSKid(nat).
+event end().
+
+(* Local Storage*)
+table APLocalBKSA(KeyID, bksa).
+table APLocalUSKSA(nat, usksa).
+table UELocalBKSA(KeyID, bksa).
+table UELocalUSKSA(nat, usksa).
+
+(* Unicast Key Negotiation *)
+let APUnicast(BK:key, N1: nonce, macUE: macAddress, macAP: macAddress) = (
+      get APLocalUSKSA(USKID, AP_USKSA) in
+      if USKID = 0 then 
+      (
+            let not_USKID = 1 in
+            get APLocalBKSA(BKID, AP_BKSA) in
+            out(cNoSec, Unicast1(BKID, not_USKID, ADDID(macAP, macUE), N1));
+            event APUSKid(not_USKID);
+            in(cNoSec, Unicast2(BKID', USKID', addid', N1', N2, micUE'));
+            get APLocalUSKSA(=USKID', USKSA') in (
+                  out(cNoSec, 1)
+            )
+            else (
+                  if N1' = N1 then (
+                        let UEK = HMAC_MAC_UEK(BK, ADDID(macUE, macAP), N1, N2) in
+                        let UCK = HMAC_MAC_UCK(BK, ADDID(macUE, macAP), N1, N2) in
+                        let MAK = HMAC_MAC_MAK(BK, ADDID(macUE, macAP), N1, N2) in
+                        let KEK = HMAC_MAC_KEK(BK, ADDID(macUE, macAP), N1, N2) in
+                        let N1Seed = HMAC_MAC_N1Seed(BK, ADDID(macUE, macAP), N1, N2) in
+                        let newN1 = hash_nonce(N1Seed) in
+                        let micUE = hmac_sha_mic(MAK, (BKID', USKID', addid', N1', N2)) in
+                        if micUE = micUE' then (
+                              let micAP = hmac_sha_mic(MAK, (BKID, USKID, ADDID(macUE, macAP), N2)) in
+                              event  APReUnicastFinish(UEK, UCK, MAK, KEK, newN1);
+                              out(cNoSec, Unicast3(BKID, USKID, ADDID(macUE, macAP), N2, micAP))
+                              
+                        )
+                  ) 
+            )  
+      ) 
+      else (
+            let not_USKID = 0 in
+            get APLocalBKSA(BKID, AP_BKSA) in
+            out(cNoSec, Unicast1(BKID, not_USKID, ADDID(macAP, macUE), N1));
+            in(cNoSec, Unicast2(BKID', USKID', addid', N1', N2, micUE'));
+            get APLocalUSKSA(=USKID', USKSA') in (
+                  event end()
+            )
+            else (
+                  if N1' = N1 then (
+                        let UEK = HMAC_MAC_UEK(BK, ADDID(macUE, macAP), N1, N2) in
+                        let UCK = HMAC_MAC_UCK(BK, ADDID(macUE, macAP), N1, N2) in
+                        let MAK = HMAC_MAC_MAK(BK, ADDID(macUE, macAP), N1, N2) in
+                        let KEK = HMAC_MAC_KEK(BK, ADDID(macUE, macAP), N1, N2) in
+                        let N1Seed = HMAC_MAC_N1Seed(BK, ADDID(macUE, macAP), N1, N2) in
+                        let newN1 = hash_nonce(N1Seed) in
+                        let micUE = hmac_sha_mic(MAK, (BKID', USKID', addid', N1', N2)) in
+                        if micUE = micUE' then (
+                              let micAP = hmac_sha_mic(MAK, (BKID, USKID, ADDID(macUE, macAP), N2)) in
+                              event  APReUnicastFinish(UEK, UCK, MAK, KEK, newN1);
+                              out(cNoSec, Unicast3(BKID, USKID, ADDID(macUE, macAP), N2, micAP))
+                              
+                        )
+                  ) 
+            )  
+      )
+).
+
+let UEUnicast(BK: key, N1: nonce, macUE: macAddress, macAP: macAddress) = (
+      in(cNoSec, Unicast1(BKID', USKID', addid', N1'));
+      get UELocalBKSA(BKID, BKSA') in 
+      if BKID = BKID' then (
+            get UELocalUSKSA(USKID, USKSA') in 
+            event UEUSKid(USKID');
+            if USKID <> USKID' then (
+            if N1 = N1' then (
+                  new N2: nonce;
+                  let UEK = HMAC_MAC_UEK(BK, ADDID(macUE, macAP), N1, N2) in
+                  let UCK = HMAC_MAC_UCK(BK, ADDID(macUE, macAP), N1, N2) in
+                  let MAK = HMAC_MAC_MAK(BK, ADDID(macUE, macAP), N1, N2) in
+                  let KEK = HMAC_MAC_KEK(BK, ADDID(macUE, macAP), N1, N2) in
+                  let N1Seed = HMAC_MAC_N1Seed(BK, ADDID(macUE, macAP), N1, N2) in
+                  let xN1 = N1 in
+                  let newN1 = hash_nonce(N1Seed) in
+                  get UELocalUSKSA(USKID, UE_USKSA) in
+                  if USKID = 0 then 
+                  (
+                        let not_USKID = 1 in 
+                        let micUE = hmac_sha_mic(MAK, (BKID, not_USKID, addid', xN1, N2)) in
+                        out(cNoSec, Unicast2(BKID, not_USKID, ADDID(macUE, macAP), xN1, N2, micUE));
+                        in(cNoSec, Unicast3(xBKID, xUSKID, xADDID, xN2, micAP)); 
+                        let micAP' = hmac_sha_mic(MAK, (xBKID, xUSKID, xADDID, xN2)) in
+                        if micAP' = micAP && xN2 = N2 then
+                        event UEReUnicastFinish(UEK, UCK, MAK, KEK, newN1)
+                  )
+                  else
+                  (
+                        let not_USKID = 0 in
+                        let micUE = hmac_sha_mic(MAK, (BKID, not_USKID, addid', xN1, N2)) in
+                        out(cNoSec, Unicast2(BKID, not_USKID, ADDID(macUE, macAP), xN1, N2, micUE));
+                        in(cNoSec, Unicast3(xBKID, xUSKID, xADDID, xN2, micAP)); 
+                        let micAP' = hmac_sha_mic(MAK, (xBKID, xUSKID, xADDID, xN2)) in
+                        if micAP' = micAP && xN2 = N2 then
+                        event UEReUnicastFinish(UEK, UCK, MAK, KEK, newN1)
+                  )
+                  )
+            )
+      )               
+).
+
+process 
+    new BK: key; new  BKSA: bksa; new USKSA: usksa;
+    new bkid:KeyID;
+    new N1: nonce; new macUE: macAddress; new macAP: macAddress;
+    insert APLocalBKSA(bkid, BKSA);
+    insert APLocalUSKSA(0, USKSA);
+    insert UELocalBKSA(bkid, BKSA);
+    insert UELocalUSKSA(0, USKSA);
+    (!UEUnicast(BK, N1, macUE, macAP) | !APUnicast(BK, N1, macUE, macAP))
