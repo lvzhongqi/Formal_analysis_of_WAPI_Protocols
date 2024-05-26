@@ -1,7 +1,5 @@
-(* 不忽略格式检查，传进来的参数必须格式正确 *)
 set ignoreTypes = false .
 
-(* 定义 密钥、公钥、私钥、签名用公钥、签名用私钥、数据、消息、id、MAC地址、证书签名、addid、证书 数据类型*)
 type key.
 type pkey.
 type skey.
@@ -15,38 +13,37 @@ type certSignature.
 type addid.
 type certificate.
 
-const pass: bitstring. (* 定义 密码 数据类型 *)
+const pass: bitstring. 
 
 (* Message Signature *)
-fun pk(skey): pkey. (*定义公私钥，有私钥的一定有公钥*)
-fun sign(bitstring, skey): bitstring. (*定义私钥签名*)
-reduc forall m: bitstring, k: skey; checksign(m, pk(k), sign(m, k)) = pass. (*定义公钥验证签名*)
+fun pk(skey): pkey. 
+fun sign(bitstring, skey): bitstring. 
+reduc forall m: bitstring, k: skey; checksign(m, pk(k), sign(m, k)) = pass. 
 
 
 (* Diffie-Hellman Key Agreement *) 
- (* 没有析构由e^xy e^x 推到y的值，表明无法实现，椭圆曲线的上的离散对数问题 *)
-type G. (* 底数 *)
-type exponent. (* 指数 *)
-const g1: G[data]. (* 所有人公用底数 *)
-fun exp(G, exponent): G. (* 指数运算 *)
+type G.
+type exponent. 
+const g1: G[data]. 
+fun exp(G, exponent): G. 
 equation forall x: exponent, y: exponent; exp(exp(g1, x), y) = exp(exp(g1, y), x). (* e^xy=e^yx *)
 
 (* HashMac *)
-fun HMAC_MAC_key(G, nonce, nonce): key. (* 生成密钥的mac *)
-fun HMAC_MAC_nonce(G, nonce, nonce): nonce. (* 生成数据的mac *)
+fun HMAC_MAC_key(G, nonce, nonce): key. 
+fun HMAC_MAC_nonce(G, nonce, nonce): nonce. 
 
 (*Hash Function*)
-fun hash(nonce): nonce.(* 定义hash计算 *)
+fun hash(nonce): nonce.
 
 (* Certificate *)
-fun spk(sskey): spkey.(* 定义签名验证算法 *)
+fun spk(sskey): spkey.
 fun signCert(id, pkey, sskey): certSignature.
 fun cert(id, pkey, certSignature): certificate[data].
 reduc forall holderid:id, holderpk: pkey, certsign: certSignature, issuerssk: sskey; 
 verifyCertificate(cert(holderid, holderpk, signCert(holderid, holderpk, issuerssk)), spk(issuerssk)) = pass.
 
 (* ADDID Item *)
-fun ADDID(macAddress, macAddress): addid[data].  (* 定义ADDID函数 *)
+fun ADDID(macAddress, macAddress): addid[data].  
 
 (*Event*)
 event APFinishAuthBK(id, key). 
@@ -73,18 +70,18 @@ fun Auth7(bitstring): msg[data].
 (* AP Localhost Storage*)
 
 query idUE:id, idAP:id,AID:nonce;
-inj-event(APSendAID(idUE, AID)) ==>inj-event(UESendAID(idAP)). (* AID的单设一致性 *)
+inj-event(APSendAID(idUE, AID)) ==>inj-event(UESendAID(idAP)). 
 
 query idUE: id, idAP: id, BK: key;
-inj-event(UEFinishAuthBK(idUE, BK)) ==> inj-event(APFinishAuthBK(idAP, BK)).(* BK的单设一致性 *)
+inj-event(UEFinishAuthBK(idUE, BK)) ==> inj-event(APFinishAuthBK(idAP, BK)).
 
 query idUE: id, idAP: id, AID: nonce;
-inj-event(UEFinishAuthAID(idUE, AID)) ==> inj-event(APFinishAuthAID(idAP, AID)).(* BK的单设一致性 *)
+inj-event(UEFinishAuthAID(idUE, AID)) ==> inj-event(APFinishAuthAID(idAP, AID)).
 
 query idUE:id, idAP: id, aid: nonce;
-inj-event(UE_AID_finish(idUE, aid)) ==> inj-event(AP_AID_finish(idAP, aid)).(* aid 的单设一致性 *)
+inj-event(UE_AID_finish(idUE, aid)) ==> inj-event(AP_AID_finish(idAP, aid)).
 
-(* 密钥的机密性 *)
+
 query secret AP_BK.
 query secret UE_BK.
 query secret AP_newAid.
